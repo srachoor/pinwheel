@@ -1,5 +1,3 @@
-from bs4 import BeautifulSoup as soup;
-from urllib.request import urlopen as uReq;
 from TaxForm import TaxForm;
 import json;
 

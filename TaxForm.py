@@ -18,7 +18,7 @@ class TaxForm:
         
         # create the first URL to identify the total number of results
         self.form_number = form_number;
-        self.initialURL =(self.base_url + "0" + self.url_snippet2 + self.form_number.replace(" ", "+") + self.url_snippet3);
+        self.initial_URL =(self.base_url + "0" + self.url_snippet2 + self.form_number.replace(" ", "+") + self.url_snippet3);
         
         # set the total results and create all the needed soups for the tax form
         self.create_soup();
@@ -26,60 +26,67 @@ class TaxForm:
     def create_soup(self):
 
         # opens the connection and downloads html page from url
-        uClient = uReq(self.initialURL);
+        u_client = uReq(self.initial_URL);
 
         # parses html into a soup data structure to traverse html as if it were a json data type.
-        page_soup = soup(uClient.read(), "html.parser");
+        page_soup = soup(u_client.read(), "html.parser");
         self.soup_array.append(page_soup);
-        uClient.close();
+        u_client.close();
         
-        resultsElement = page_soup.find("th", {"class": "ShowByColumn"});
-        if (resultsElement == None):
-            raise Exception("One or some of the search terms provided were not found on IRS website.")
+        results_element = page_soup.find("th", {"class": "ShowByColumn"});
+        
+        if (results_element == None):
+            return;
         
         else:
             # finds the element on the page that has the total number of results
-            resultsElementText = page_soup.find("th", {"class": "ShowByColumn"}).get_text();
+            results_element_text = page_soup.find("th", {"class": "ShowByColumn"}).get_text();
 
             # remove line breaks and excess spaces
-            arr = resultsElementText.strip().split(" ");
+            arr = results_element_text.strip().split(" ");
             
             # gets the index of the total number of search results and sets it to the object. Format is usually "Results: X - Y of N files", hence the index("files")
-            indexOfTotalResults = arr.index("files") - 1;
-            self.totalResults = int(arr[indexOfTotalResults].replace(",",""));
+            index_of_total_results = arr.index("files") - 1;
+            self.total_results = int(arr[index_of_total_results].replace(",",""));
 
             # default search results per page is set to 200 as given in the base_url above. If there are more than 200 results, we'll need mutliple soups
-            if (self.totalResults > 200):
+            if (self.total_results > 200):
                 self.create_additional_soups();
             
 
     # only called if there are more than 200 search results
     def create_additional_soups(self):
-        numOfURLs = (int((self.totalResults/200)) + (self.totalResults % 200 > 0));
-        for x in range(1, numOfURLs):
-            firstRow = str(x * 200);
-            currentURL = self.base_url + firstRow + self.url_snippet2 + self.form_number.replace(" ", "+") + self.url_snippet3;
-            uClient = uReq(currentURL);
-            page_soup = soup(uClient.read(), "html.parser");
-            uClient.close();
+        num_of_URLs = (int((self.total_results/200)) + (self.total_results % 200 > 0));
+        for x in range(1, num_of_URLs):
+            first_row = str(x * 200);
+            current_URL = self.base_url + first_row + self.url_snippet2 + self.form_number.replace(" ", "+") + self.url_snippet3;
+            u_client = uReq(current_URL);
+            page_soup = soup(u_client.read(), "html.parser");
+            u_client.close();
             self.soup_array.append(page_soup);
 
     # only called if the user wants the json data objects
     def scrape_soups(self):
         for each_soup in self.soup_array:
-            table_rows = each_soup.findAll("tr", {"class": ["odd", "even"]});
-            for each_row in table_rows:
-                form_number = each_row.a.get_text();
-                if (form_number == self.form_number):
-                    current_year = int(each_row.find("td",{"class": "EndCellSpacer"}).get_text());
-                    self.min_year = min(self.min_year, current_year);
             
-                    if (current_year > self.max_year): 
-                        self.max_year = current_year;
-                        self.form_title = each_row.find("td", {"class": "MiddleCellSpacer"}).get_text().strip();                    
+            # find rows that match the form number (e.g., "Form W-2" or "Form 1040")
+            table_rows = each_soup.find_all("a", text=self.form_number);
+            
+            # identify the min and max years by reviewing each row and set the title to the latest year's form title
+            for each_row in table_rows:
+                current_year = int(each_row.parent.parent.find("td",{"class": "EndCellSpacer"}).get_text());
+                self.min_year = min(self.min_year, current_year);
+        
+                if (current_year > self.max_year): 
+                    self.max_year = current_year;
+                    self.form_title = each_row.parent.parent.find("td", {"class": "MiddleCellSpacer"}).get_text().strip();
 
-        return self.get_data();
+        if(hasattr(self,"form_title")):
+            return self.get_data();
+        else:
+            print("\nOne or some of the search terms provided were not found on IRS website.")
 
+    # return an object we will return to the user as a prettified JSON object array
     def get_data(self):
         x = {
             "form_number": self.form_number,
@@ -92,17 +99,19 @@ class TaxForm:
     # only called if user wants to download the files
     def download_files(self, year1, year2):
         num_docs_requested = (year2 - year1 + 1);
-        print("Requested " + str(num_docs_requested) + " documents for the years: " + str(year1) + "-" + str(year2));
+        print("\nRequested " + str(num_docs_requested) + " documents for the years: " + str(year1) + "-" + str(year2));
+        
         i = 0;
         for each_soup in self.soup_array:
-            table_rows = each_soup.findAll("tr", {"class": ["odd", "even"]});
+            table_rows = each_soup.find_all("a", text=self.form_number);
+            
             for each_row in table_rows:
-                form_number = each_row.a.get_text();
-                current_year = int(each_row.find("td",{"class": "EndCellSpacer"}).get_text());
-                if (form_number == self.form_number and (current_year >= year1 and current_year <= year2)):
-                    pdfLink = each_row.find("td",{"class": "LeftCellSpacer"}).a["href"];
-                    response = requests.get(pdfLink);
-                    with open("form/" + form_number + ' - ' + str(current_year),"wb") as pdf:
+                current_year = int(each_row.parent.parent.find("td",{"class": "EndCellSpacer"}).get_text());
+                
+                if (current_year >= year1 and current_year <= year2):
+                    pdf_link = each_row["href"];
+                    response = requests.get(pdf_link);
+                    with open("form/" + self.form_number + ' - ' + str(current_year),"wb") as pdf:
                         pdf.write(response.content);
                     i+=1;
         
@@ -114,16 +123,17 @@ class TaxForm:
 
     # only called if user wants to download the file for one year
     def download_file(self, year1):
-        print("Requested one document for the year: " + str(year1));
+        print("\nRequested one document for the year: " + str(year1));
         for each_soup in self.soup_array:
-            table_rows = each_soup.findAll("tr", {"class": ["odd", "even"]});
+            table_rows = each_soup.find_all("a", text=self.form_number);
+            
             for each_row in table_rows:
-                form_number = each_row.a.get_text();
-                current_year = int(each_row.find("td",{"class": "EndCellSpacer"}).get_text());
-                if (form_number == self.form_number and (current_year == year1)):
-                    pdfLink = each_row.find("td",{"class": "LeftCellSpacer"}).a["href"];
-                    response = requests.get(pdfLink);
-                    with open("form/" + form_number + ' - ' + str(current_year),"wb") as pdf:
+                current_year = int(each_row.parent.parent.find("td",{"class": "EndCellSpacer"}).get_text());
+                
+                if (current_year == year1):
+                    pdf_link = each_row["href"];
+                    response = requests.get(pdf_link);
+                    with open("form/" + self.form_number + ' - ' + str(current_year),"wb") as pdf:
                         pdf.write(response.content);
                         print("Retrieved the document for the year: " + str(year1));
                     return;
