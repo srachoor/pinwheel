@@ -1,0 +1,3 @@
+# Requirements for IRSScraper.py #
+bs4
+requests
